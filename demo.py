@@ -12,7 +12,7 @@ from omegaconf import DictConfig, OmegaConf
 from vggsfm.runners.runner import VGGSfMRunner
 from vggsfm.datasets.demo_loader import DemoLoader
 from vggsfm.utils.utils import seed_all_random_engines
-
+import os
 
 @hydra.main(config_path="cfgs/", config_name="demo")
 def demo_fn(cfg: DictConfig):
@@ -43,7 +43,8 @@ def demo_fn(cfg: DictConfig):
         normalize_cameras=False,
         load_gt=cfg.load_gt,
     )
-
+    print('scene_dir')
+    print(cfg.SCENE_DIR)
     sequence_list = test_dataset.sequence_list
 
     seq_name = sequence_list[0]  # Run on one Scene
@@ -55,8 +56,10 @@ def demo_fn(cfg: DictConfig):
 
     output_dir = batch[
         "scene_dir"
-    ]  # which is also cfg.SCENE_DIR for DemoLoader
+    ].split('/')  # which is also cfg.SCENE_DIR for DemoLoader
 
+    output_dir = os.path.join(output_dir[0],output_dir[1])
+    print(output_dir)
     images = batch["image"]
     masks = batch["masks"] if batch["masks"] is not None else None
     crop_params = (
@@ -68,7 +71,7 @@ def demo_fn(cfg: DictConfig):
 
     # Run VGGSfM
     # Both visualization and output writing are performed inside VGGSfMRunner
-    predictions = vggsfm_runner.run(
+    vggsfm_runner.run(
         images,
         masks=masks,
         original_images=original_images,
@@ -76,6 +79,8 @@ def demo_fn(cfg: DictConfig):
         crop_params=crop_params,
         seq_name=seq_name,
         output_dir=output_dir,
+        scene_dir = cfg.SCENE_DIR,
+        scene_name = cfg.scene_name
     )
 
     print("Demo Finished Successfully")
@@ -84,5 +89,5 @@ def demo_fn(cfg: DictConfig):
 
 
 if __name__ == "__main__":
-    with torch.no_grad():
-        demo_fn()
+    demo_fn()
+

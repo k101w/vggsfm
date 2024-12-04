@@ -10,7 +10,7 @@ import glob
 import torch
 import pycolmap
 import numpy as np
-
+import pdb
 
 from typing import Optional
 
@@ -72,7 +72,7 @@ class DemoLoader(Dataset):
         bag_name = os.path.basename(os.path.normpath(SCENE_DIR))
         self.have_mask = os.path.exists(os.path.join(SCENE_DIR, "masks"))
 
-        img_filenames = glob.glob(os.path.join(SCENE_DIR, f"{self.prefix}/*"))
+        img_filenames = glob.glob(os.path.join(SCENE_DIR, "*"))
 
         if self.sort_by_filename:
             img_filenames = sorted(img_filenames)
@@ -182,7 +182,7 @@ class DemoLoader(Dataset):
         """
         if sequence_name is None:
             sequence_name = self.sequence_list[index]
-
+       
         metadata = self.sequences[sequence_name]
 
         if ids is None:

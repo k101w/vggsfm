@@ -11,8 +11,9 @@ import copy
 import torch
 import pycolmap
 import datetime
-
+import pdb
 import time
+import json
 import numpy as np
 from visdom import Visdom
 from torch.cuda.amp import autocast
@@ -24,7 +25,7 @@ from vggsfm.utils.visualizer import Visualizer
 from vggsfm.two_view_geo.estimate_preliminary import (
     estimate_preliminary_cameras,
 )
-
+import pdb
 from vggsfm.utils.utils import (
     write_array,
     generate_grid_samples,
@@ -177,6 +178,8 @@ class VGGSfMRunner:
         query_frame_num=None,
         seq_name=None,
         output_dir=None,
+        scene_dir = None,
+        scene_name = None
     ):
         """
         Executes the full VGGSfM pipeline on a set of input images.
@@ -225,7 +228,7 @@ class VGGSfMRunner:
                 query_frame_num = self.cfg.query_frame_num
 
             # Perform sparse reconstruction
-            predictions = self.sparse_reconstruct(
+            R,T = self.sparse_reconstruct(
                 images,
                 masks=masks,
                 crop_params=crop_params,
@@ -234,60 +237,90 @@ class VGGSfMRunner:
                 seq_name=seq_name,
                 output_dir=output_dir,
             )
+            predictions = []
+            R = R.cpu().tolist()
+            T = T.cpu().tolist()
+            for i, filename in enumerate(sorted(os.listdir(scene_dir))):
 
-            # Save the sparse reconstruction results
-            if self.cfg.save_to_disk:
-                self.save_sparse_reconstruction(
-                    predictions, seq_name, output_dir
-                )
+                predictions.append({
+                "filepath": filename,  # Only save the filename, not the full path
+                "R": R[i],
+                "T": T[i]})
+            
+            new_data = [
+                {
+                    "scene": scene_name,
+                    "predictions": predictions
+                }
+    ]
+
+            output_file = os.path.join(output_dir,'output.json')
+
+            try:
+            # Read existing data from the file
+                with open(output_file, "r") as f:
+                    data = json.load(f)  # Load existing JSON array
+            except FileNotFoundError:
+                data = []  # Start with an empty list if file doesn't exist
+
+            # Append new data
+            data.append(new_data)
+            with open(output_file, "a") as f:
+                json.dump(data, f, indent=4)
+
+            # # Save the sparse reconstruction results
+            # if self.cfg.save_to_disk:
+            #     self.save_sparse_reconstruction(
+            #         predictions, seq_name, output_dir
+            #     )
                 
-                if predictions["additional_points_dict"] is not None:
-                    additional_dir = os.path.join(output_dir, "additional")
-                    os.makedirs(additional_dir, exist_ok=True)
-                    torch.save(predictions["additional_points_dict"], os.path.join(additional_dir, "additional_points_dict.pt"))
+            #     if predictions["additional_points_dict"] is not None:
+            #         additional_dir = os.path.join(output_dir, "additional")
+            #         os.makedirs(additional_dir, exist_ok=True)
+            #         torch.save(predictions["additional_points_dict"], os.path.join(additional_dir, "additional_points_dict.pt"))
 
 
-            # Extract sparse depth and point information if needed for further processing
-            if self.cfg.dense_depth or self.cfg.make_reproj_video:
-                predictions = (
-                    self.extract_sparse_depth_and_point_from_reconstruction(
-                        predictions
-                    )
-                )
+            # # Extract sparse depth and point information if needed for further processing
+            # if self.cfg.dense_depth or self.cfg.make_reproj_video:
+            #     predictions = (
+            #         self.extract_sparse_depth_and_point_from_reconstruction(
+            #             predictions
+            #         )
+            #     )
 
-            # Perform dense reconstruction if enabled
-            if self.cfg.dense_depth:
-                predictions = self.dense_reconstruct(
-                    predictions, image_paths, original_images
-                )
+            # # Perform dense reconstruction if enabled
+            # if self.cfg.dense_depth:
+            #     predictions = self.dense_reconstruct(
+            #         predictions, image_paths, original_images
+            #     )
 
-                # Save the dense depth maps
-                if self.cfg.save_to_disk:
-                    self.save_dense_depth_maps(
-                        predictions["depth_dict"], output_dir
-                    )
+            #     # Save the dense depth maps
+            #     if self.cfg.save_to_disk:
+            #         self.save_dense_depth_maps(
+            #             predictions["depth_dict"], output_dir
+            #         )
 
-            # Create reprojection video if enabled
-            if self.cfg.make_reproj_video:
-                max_hw = crop_params[0, :, :2].max(dim=0)[0].long()
-                video_size = (max_hw[0].item(), max_hw[1].item())
-                img_with_circles_list = self.make_reprojection_video(
-                    predictions, video_size, image_paths, original_images
-                )
-                predictions["reproj_video"] = img_with_circles_list
-                if self.cfg.save_to_disk:
-                    self.save_reprojection_video(
-                        img_with_circles_list, video_size, output_dir
-                    )
+            # # Create reprojection video if enabled
+            # if self.cfg.make_reproj_video:
+            #     max_hw = crop_params[0, :, :2].max(dim=0)[0].long()
+            #     video_size = (max_hw[0].item(), max_hw[1].item())
+            #     img_with_circles_list = self.make_reprojection_video(
+            #         predictions, video_size, image_paths, original_images
+            #     )
+            #     predictions["reproj_video"] = img_with_circles_list
+            #     if self.cfg.save_to_disk:
+            #         self.save_reprojection_video(
+            #             img_with_circles_list, video_size, output_dir
+            #         )
 
-            # Visualize the 3D reconstruction if enabled
-            if self.cfg.viz_visualize:
-                self.visualize_3D_in_visdom(predictions, seq_name, output_dir)
+            # # Visualize the 3D reconstruction if enabled
+            # if self.cfg.viz_visualize:
+            #     self.visualize_3D_in_visdom(predictions, seq_name, output_dir)
 
-            if self.cfg.gr_visualize:
-                self.visualize_3D_in_gradio(predictions, seq_name, output_dir)
+            # if self.cfg.gr_visualize:
+            #     self.visualize_3D_in_gradio(predictions, seq_name, output_dir)
 
-            return predictions
+            return 
 
     def sparse_reconstruct(
         self,
@@ -391,6 +424,7 @@ class VGGSfMRunner:
         if self.cfg.avg_pose:
             # Conduct several times with different frames as the query frame
             # self.camera_predictor is super fast and this is almost a free-lunch
+            pdb.set_trace()
             pred_cameras = average_camera_prediction(
                 self.camera_predictor,
                 reshaped_image,
@@ -401,236 +435,238 @@ class VGGSfMRunner:
             pred_cameras = self.camera_predictor(
                 reshaped_image, batch_size=batch_num
             )["pred_cameras"]
+        print(pred_cameras.R.shape)
+        print(pred_cameras.T.shape)
+        return pred_cameras.R, pred_cameras.T
+        # # Prepare image feature maps for tracker
+        # fmaps_for_tracker = self.track_predictor.process_images_to_fmaps(images)
 
-        # Prepare image feature maps for tracker
-        fmaps_for_tracker = self.track_predictor.process_images_to_fmaps(images)
+        # # Calculate bounding boxes if crop parameters are provided
+        # if crop_params is not None:
+        #     bound_bboxes = crop_params[:, :, -4:-2].abs().to(device)
+        #     # also remove those near the boundary
+        #     bound_bboxes[bound_bboxes != 0] += self.remove_borders
+        #     bound_bboxes = torch.cat(
+        #         [bound_bboxes, reshaped_image.shape[-1] - bound_bboxes], dim=-1
+        #     )
 
-        # Calculate bounding boxes if crop parameters are provided
-        if crop_params is not None:
-            bound_bboxes = crop_params[:, :, -4:-2].abs().to(device)
-            # also remove those near the boundary
-            bound_bboxes[bound_bboxes != 0] += self.remove_borders
-            bound_bboxes = torch.cat(
-                [bound_bboxes, reshaped_image.shape[-1] - bound_bboxes], dim=-1
-            )
+        # # Predict tracks
+        # with autocast(dtype=dtype):
+        #     pred_track, pred_vis, pred_score = predict_tracks(
+        #         self.cfg.query_method,
+        #         self.cfg.max_query_pts,
+        #         self.track_predictor,
+        #         images,
+        #         masks,
+        #         fmaps_for_tracker,
+        #         query_frame_indexes,
+        #         self.cfg.fine_tracking,
+        #         bound_bboxes,
+        #     )
 
-        # Predict tracks
-        with autocast(dtype=dtype):
-            pred_track, pred_vis, pred_score = predict_tracks(
-                self.cfg.query_method,
-                self.cfg.max_query_pts,
-                self.track_predictor,
-                images,
-                masks,
-                fmaps_for_tracker,
-                query_frame_indexes,
-                self.cfg.fine_tracking,
-                bound_bboxes,
-            )
+        #     # Complement non-visible frames if enabled
+        #     if self.cfg.comple_nonvis:
+        #         pred_track, pred_vis, pred_score = comple_nonvis_frames(
+        #             self.cfg.query_method,
+        #             self.cfg.max_query_pts,
+        #             self.track_predictor,
+        #             images,
+        #             masks,
+        #             fmaps_for_tracker,
+        #             [pred_track, pred_vis, pred_score],
+        #             self.cfg.fine_tracking,
+        #             bound_bboxes,
+        #         )
 
-            # Complement non-visible frames if enabled
-            if self.cfg.comple_nonvis:
-                pred_track, pred_vis, pred_score = comple_nonvis_frames(
-                    self.cfg.query_method,
-                    self.cfg.max_query_pts,
-                    self.track_predictor,
-                    images,
-                    masks,
-                    fmaps_for_tracker,
-                    [pred_track, pred_vis, pred_score],
-                    self.cfg.fine_tracking,
-                    bound_bboxes,
-                )
+        # # Visualize tracks as a video if enabled
+        # if self.cfg.visual_tracks:
+        #     vis = Visualizer(save_dir=visual_dir, linewidth=1)
+        #     vis.visualize(
+        #         images * 255, pred_track, pred_vis[..., None], filename="track"
+        #     )
 
-        # Visualize tracks as a video if enabled
-        if self.cfg.visual_tracks:
-            vis = Visualizer(save_dir=visual_dir, linewidth=1)
-            vis.visualize(
-                images * 255, pred_track, pred_vis[..., None], filename="track"
-            )
+        # torch.cuda.empty_cache()
 
-        torch.cuda.empty_cache()
+        # # Force predictions in padding areas as non-visible
+        # if crop_params is not None:
+        #     hvis = torch.logical_and(
+        #         pred_track[..., 1] >= bound_bboxes[:, :, 1:2],
+        #         pred_track[..., 1] <= bound_bboxes[:, :, 3:4],
+        #     )
+        #     wvis = torch.logical_and(
+        #         pred_track[..., 0] >= bound_bboxes[:, :, 0:1],
+        #         pred_track[..., 0] <= bound_bboxes[:, :, 2:3],
+        #     )
+        #     force_vis = torch.logical_and(hvis, wvis)
+        #     pred_vis = pred_vis * force_vis.float()
 
-        # Force predictions in padding areas as non-visible
-        if crop_params is not None:
-            hvis = torch.logical_and(
-                pred_track[..., 1] >= bound_bboxes[:, :, 1:2],
-                pred_track[..., 1] <= bound_bboxes[:, :, 3:4],
-            )
-            wvis = torch.logical_and(
-                pred_track[..., 0] >= bound_bboxes[:, :, 0:1],
-                pred_track[..., 0] <= bound_bboxes[:, :, 2:3],
-            )
-            force_vis = torch.logical_and(hvis, wvis)
-            pred_vis = pred_vis * force_vis.float()
+        # if self.cfg.use_poselib:
+        #     estimate_preliminary_cameras_fn = (
+        #         estimate_preliminary_cameras_poselib
+        #     )
+        # else:
+        #     estimate_preliminary_cameras_fn = estimate_preliminary_cameras
 
-        if self.cfg.use_poselib:
-            estimate_preliminary_cameras_fn = (
-                estimate_preliminary_cameras_poselib
-            )
-        else:
-            estimate_preliminary_cameras_fn = estimate_preliminary_cameras
+        # # Estimate preliminary_cameras by recovering fundamental/essential/homography matrix from 2D matches
+        # # By default, we use fundamental matrix estimation with 7p/8p+LORANSAC
+        # # All the operations are batched and differentiable (if necessary)
+        # # except when you enable use_poselib to save GPU memory
+        # _, preliminary_dict = estimate_preliminary_cameras_fn(
+        #     pred_track,
+        #     pred_vis,
+        #     width,
+        #     height,
+        #     tracks_score=pred_score,
+        #     max_error=self.cfg.fmat_thres,
+        #     loopresidual=True,
+        # )
 
-        # Estimate preliminary_cameras by recovering fundamental/essential/homography matrix from 2D matches
-        # By default, we use fundamental matrix estimation with 7p/8p+LORANSAC
-        # All the operations are batched and differentiable (if necessary)
-        # except when you enable use_poselib to save GPU memory
-        _, preliminary_dict = estimate_preliminary_cameras_fn(
-            pred_track,
-            pred_vis,
-            width,
-            height,
-            tracks_score=pred_score,
-            max_error=self.cfg.fmat_thres,
-            loopresidual=True,
-        )
-
-        # Perform triangulation and bundle adjustment
-        with autocast(dtype=torch.float32):
-            (
-                extrinsics_opencv,
-                intrinsics_opencv,
-                extra_params,
-                points3D,
-                points3D_rgb,
-                reconstruction,
-                valid_frame_mask,
-                valid_2D_mask,
-                valid_tracks,
-            ) = self.triangulator(
-                pred_cameras,
-                pred_track,
-                pred_vis,
-                images,
-                preliminary_dict,
-                pred_score=pred_score,
-                BA_iters=self.cfg.BA_iters,
-                shared_camera=self.cfg.shared_camera,
-                max_reproj_error=self.cfg.max_reproj_error,
-                init_max_reproj_error=self.cfg.init_max_reproj_error,
-                extract_color=self.cfg.extract_color,
-                robust_refine=self.cfg.robust_refine,
-                camera_type=self.cfg.camera_type,
-            )
+        # # Perform triangulation and bundle adjustment
+        # with autocast(dtype=torch.float32):
+        #     (
+        #         extrinsics_opencv,
+        #         intrinsics_opencv,
+        #         extra_params,
+        #         points3D,
+        #         points3D_rgb,
+        #         reconstruction,
+        #         valid_frame_mask,
+        #         valid_2D_mask,
+        #         valid_tracks,
+        #     ) = self.triangulator(
+        #         pred_cameras,
+        #         pred_track,
+        #         pred_vis,
+        #         images,
+        #         preliminary_dict,
+        #         pred_score=pred_score,
+        #         BA_iters=self.cfg.BA_iters,
+        #         shared_camera=self.cfg.shared_camera,
+        #         max_reproj_error=self.cfg.max_reproj_error,
+        #         init_max_reproj_error=self.cfg.init_max_reproj_error,
+        #         extract_color=self.cfg.extract_color,
+        #         robust_refine=self.cfg.robust_refine,
+        #         camera_type=self.cfg.camera_type,
+        #     )
 
         
-        additional_points_dict = None
+        # additional_points_dict = None
         
-        if self.cfg.extra_pt_pixel_interval > 0:
-            additional_points_dict = self.triangulate_extra_points(
-                images,
-                masks,
-                fmaps_for_tracker,
-                bound_bboxes,
-                intrinsics_opencv,
-                extra_params,
-                extrinsics_opencv,
-                image_paths,
-                frame_num,
-            )
-            additional_points3D = torch.cat(
-                [
-                    additional_points_dict[img_name]["points3D"]
-                    for img_name in image_paths
-                ],
-                dim=0,
-            )
-            additional_points3D_rgb = torch.cat(
-                [
-                    additional_points_dict[img_name]["points3D_rgb"]
-                    for img_name in image_paths
-                ],
-                dim=0,
-            )
+        # if self.cfg.extra_pt_pixel_interval > 0:
+        #     additional_points_dict = self.triangulate_extra_points(
+        #         images,
+        #         masks,
+        #         fmaps_for_tracker,
+        #         bound_bboxes,
+        #         intrinsics_opencv,
+        #         extra_params,
+        #         extrinsics_opencv,
+        #         image_paths,
+        #         frame_num,
+        #     )
+        #     additional_points3D = torch.cat(
+        #         [
+        #             additional_points_dict[img_name]["points3D"]
+        #             for img_name in image_paths
+        #         ],
+        #         dim=0,
+        #     )
+        #     additional_points3D_rgb = torch.cat(
+        #         [
+        #             additional_points_dict[img_name]["points3D_rgb"]
+        #             for img_name in image_paths
+        #         ],
+        #         dim=0,
+        #     )
 
-            additional_points_dict["sfm_points_num"] = len(points3D)
-            additional_points_dict["additional_points_num"] = len(additional_points3D)
+        #     additional_points_dict["sfm_points_num"] = len(points3D)
+        #     additional_points_dict["additional_points_num"] = len(additional_points3D)
 
-            if self.cfg.concat_extra_points:
-                additional_points3D_numpy = additional_points3D.cpu().numpy()
-                additional_points3D_rgb_numpy = (
-                    (additional_points3D_rgb * 255).long().cpu().numpy()
-                )
-                for extra_point_idx in range(len(additional_points3D)):
-                    reconstruction.add_point3D(
-                        additional_points3D_numpy[extra_point_idx],
-                        pycolmap.Track(),
-                        additional_points3D_rgb_numpy[extra_point_idx],
-                    )
+        #     if self.cfg.concat_extra_points:
+        #         additional_points3D_numpy = additional_points3D.cpu().numpy()
+        #         additional_points3D_rgb_numpy = (
+        #             (additional_points3D_rgb * 255).long().cpu().numpy()
+        #         )
+        #         for extra_point_idx in range(len(additional_points3D)):
+        #             reconstruction.add_point3D(
+        #                 additional_points3D_numpy[extra_point_idx],
+        #                 pycolmap.Track(),
+        #                 additional_points3D_rgb_numpy[extra_point_idx],
+        #             )
                     
-                points3D = torch.cat([points3D, additional_points3D], dim=0)
-                points3D_rgb = torch.cat(
-                    [points3D_rgb, additional_points3D_rgb], dim=0
-                )
+        #         points3D = torch.cat([points3D, additional_points3D], dim=0)
+        #         points3D_rgb = torch.cat(
+        #             [points3D_rgb, additional_points3D_rgb], dim=0
+        #         )
 
-        if self.cfg.filter_invalid_frame:
-            extrinsics_opencv = extrinsics_opencv[valid_frame_mask]
-            intrinsics_opencv = intrinsics_opencv[valid_frame_mask]
-            if extra_params is not None:
-                extra_params = extra_params[valid_frame_mask]
-            invalid_ids = torch.nonzero(~valid_frame_mask).squeeze(1)
-            invalid_ids = invalid_ids.cpu().numpy().tolist()
-            if len(invalid_ids) > 0:
-                for invalid_id in invalid_ids:
-                    reconstruction.deregister_image(invalid_id)
+        # if self.cfg.filter_invalid_frame:
+        #     extrinsics_opencv = extrinsics_opencv[valid_frame_mask]
+        #     intrinsics_opencv = intrinsics_opencv[valid_frame_mask]
+        #     if extra_params is not None:
+        #         extra_params = extra_params[valid_frame_mask]
+        #     invalid_ids = torch.nonzero(~valid_frame_mask).squeeze(1)
+        #     invalid_ids = invalid_ids.cpu().numpy().tolist()
+        #     if len(invalid_ids) > 0:
+        #         for invalid_id in invalid_ids:
+        #             reconstruction.deregister_image(invalid_id)
 
-        img_size = images.shape[-1]  # H or W, the same for square
+        # img_size = images.shape[-1]  # H or W, the same for square
 
-        if center_order is not None:
-            # NOTE we changed the image order previously, now we need to scwitch it back
-            extrinsics_opencv = extrinsics_opencv[center_order]
-            intrinsics_opencv = intrinsics_opencv[center_order]
-            if extra_params is not None:
-                extra_params = extra_params[center_order]
-            pred_track = pred_track[:, center_order]
-            pred_vis = pred_vis[:, center_order]
-            if pred_score is not None:
-                pred_score = pred_score[:, center_order]
+        # if center_order is not None:
+        #     # NOTE we changed the image order previously, now we need to scwitch it back
+        #     extrinsics_opencv = extrinsics_opencv[center_order]
+        #     intrinsics_opencv = intrinsics_opencv[center_order]
+        #     if extra_params is not None:
+        #         extra_params = extra_params[center_order]
+        #     pred_track = pred_track[:, center_order]
+        #     pred_vis = pred_vis[:, center_order]
+        #     if pred_score is not None:
+        #         pred_score = pred_score[:, center_order]
 
 
-        if back_to_original_resolution:
-            reconstruction = self.rename_colmap_recons_and_rescale_camera(
-                reconstruction,
-                image_paths,
-                crop_params,
-                img_size,
-                shared_camera=self.cfg.shared_camera,
-                shift_point2d_to_original_res=self.cfg.shift_point2d_to_original_res,
-            )
+        # if back_to_original_resolution:
+        #     reconstruction = self.rename_colmap_recons_and_rescale_camera(
+        #         reconstruction,
+        #         image_paths,
+        #         crop_params,
+        #         img_size,
+        #         shared_camera=self.cfg.shared_camera,
+        #         shift_point2d_to_original_res=self.cfg.shift_point2d_to_original_res,
+        #     )
 
-            # Also rescale the intrinsics_opencv tensor
-            fname_to_id = {
-                reconstruction.images[imgid].name: imgid
-                for imgid in reconstruction.images
-            }
-            intrinsics_original_res = []
-            # We assume the returned extri and intri cooresponds to the order of sorted image_paths
-            for fname in sorted(image_paths):
-                pyimg = reconstruction.images[fname_to_id[fname]]
-                pycam = reconstruction.cameras[pyimg.camera_id]
-                intrinsics_original_res.append(pycam.calibration_matrix())
-            intrinsics_opencv = torch.from_numpy(
-                np.stack(intrinsics_original_res)
-            ).to(device)
+        #     # Also rescale the intrinsics_opencv tensor
+        #     fname_to_id = {
+        #         reconstruction.images[imgid].name: imgid
+        #         for imgid in reconstruction.images
+        #     }
+        #     intrinsics_original_res = []
+        #     # We assume the returned extri and intri cooresponds to the order of sorted image_paths
+        #     for fname in sorted(image_paths):
+        #         pyimg = reconstruction.images[fname_to_id[fname]]
+        #         pycam = reconstruction.cameras[pyimg.camera_id]
+        #         intrinsics_original_res.append(pycam.calibration_matrix())
+        #     intrinsics_opencv = torch.from_numpy(
+        #         np.stack(intrinsics_original_res)
+        #     ).to(device)
 
-        predictions["extrinsics_opencv"] = extrinsics_opencv
-        # NOTE! If not back_to_original_resolution, then intrinsics_opencv
-        # cooresponds to the resized one (e.g., 1024x1024)
-        predictions["intrinsics_opencv"] = intrinsics_opencv
-        predictions["points3D"] = points3D
-        predictions["points3D_rgb"] = points3D_rgb
-        predictions["reconstruction"] = reconstruction
-        predictions["extra_params"] = extra_params
-        predictions["unproj_dense_points3D"] = None  # placeholder here
-        predictions["valid_2D_mask"] = valid_2D_mask
-        predictions["pred_track"] = pred_track
-        predictions["pred_vis"] = pred_vis
-        predictions["pred_score"] = pred_score
-        predictions["valid_tracks"] = valid_tracks
+        # predictions["extrinsics_opencv"] = extrinsics_opencv
+        # # NOTE! If not back_to_original_resolution, then intrinsics_opencv
+        # # cooresponds to the resized one (e.g., 1024x1024)
+        # predictions["intrinsics_opencv"] = intrinsics_opencv
+        # predictions["points3D"] = points3D
+        # predictions["points3D_rgb"] = points3D_rgb
+        # predictions["reconstruction"] = reconstruction
+        # predictions["extra_params"] = extra_params
+        # predictions["unproj_dense_points3D"] = None  # placeholder here
+        # predictions["valid_2D_mask"] = valid_2D_mask
+        # predictions["pred_track"] = pred_track
+        # predictions["pred_vis"] = pred_vis
+        # predictions["pred_score"] = pred_score
+        # predictions["valid_tracks"] = valid_tracks
         
-        predictions["additional_points_dict"] = additional_points_dict
+        # predictions["additional_points_dict"] = additional_points_dict
         
-        return predictions
+        # return predictions
 
     def triangulate_extra_points(
         self,

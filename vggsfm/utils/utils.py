@@ -21,7 +21,7 @@ from .metric import closed_form_inverse, closed_form_inverse_OpenCV
 from scipy.spatial.transform import Rotation as sciR
 from minipytorch3d.cameras import CamerasBase, PerspectiveCameras
 
-
+import pdb
 def average_camera_prediction(
     camera_predictor,
     reshaped_image,
@@ -274,9 +274,26 @@ def generate_rank_by_dino(
         align_corners=True,
     )
     rgbs = camera_predictor._resnet_normalize_image(rgbs)
-
     # Get the image features (patch level)
+    frame_feat = {'x_norm_clstoken':[], 'x_norm_regtokens':[], 'x_norm_patchtokens':[], 'x_prenorm':[], 'masks':[]}
+    frame_list = []
+    i=0
+    # while i<rgbs.shape[0]:
+    #     temp = camera_predictor.backbone(rgbs[i:i+100], is_training=True)
+    #     frame_list.append(temp)
+    #     i += 100
+    
+    # for t in frame_list:
+    #     for k in t.keys():
+    #         frame_feat[k].append(t[k])
+    
+    # for k in frame_feat.keys():
+    #     if frame_feat[k][0]!=None:
+    #         frame_feat[k] = torch.cat(frame_feat[k],dim=0)
+    #     else:
+    #         frame_feat[k] = None
     frame_feat = camera_predictor.backbone(rgbs, is_training=True)
+   #TODO:
     frame_feat = frame_feat["x_norm_patchtokens"]
     frame_feat_norm = F.normalize(frame_feat, p=2, dim=1)
 
